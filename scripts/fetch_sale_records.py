@@ -57,6 +57,7 @@ SESSION.headers.update({
 
 
 def post_json(url, payload, retries=3):
+    last_err = "未知错误"
     for i in range(retries):
         try:
             r = SESSION.post(url, json=payload, timeout=30)
@@ -67,22 +68,43 @@ def post_json(url, payload, retries=3):
                 time.sleep(0.5 * (i + 2))
                 continue
             return d
-        except Exception:
+        except requests.exceptions.Timeout:
+            last_err = "网络超时"
             time.sleep(0.5 * (i + 2))
-    print(f"⚠️ 请求失败（已重试 {retries} 次）：{url}")
+        except requests.exceptions.ConnectionError:
+            last_err = "网络连接失败"
+            time.sleep(0.5 * (i + 2))
+        except requests.exceptions.SSLError:
+            last_err = "SSL/代理问题"
+            time.sleep(0.5 * (i + 2))
+        except Exception as e:
+            last_err = type(e).__name__
+            time.sleep(0.5 * (i + 2))
+    print(f"⚠️ 请求失败[{last_err}]（已重试 {retries} 次）：{url}，请检查网络或代理")
     return None
 
 
 def get_json(url, params, retries=3):
     """GET 请求（用于销售记录接口）"""
+    last_err = "未知错误"
     for i in range(retries):
         try:
             r = SESSION.get(url, params=params, timeout=30)
             d = r.json()
             return d
-        except Exception:
+        except requests.exceptions.Timeout:
+            last_err = "网络超时"
             time.sleep(0.5 * (i + 2))
-    print(f"⚠️ 请求失败（已重试 {retries} 次）：{url}")
+        except requests.exceptions.ConnectionError:
+            last_err = "网络连接失败"
+            time.sleep(0.5 * (i + 2))
+        except requests.exceptions.SSLError:
+            last_err = "SSL/代理问题"
+            time.sleep(0.5 * (i + 2))
+        except Exception as e:
+            last_err = type(e).__name__
+            time.sleep(0.5 * (i + 2))
+    print(f"⚠️ 请求失败[{last_err}]（已重试 {retries} 次）：{url}，请检查网络或代理")
     return None
 
 
