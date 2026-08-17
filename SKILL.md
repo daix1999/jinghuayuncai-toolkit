@@ -62,10 +62,11 @@ python scripts/query_suppliers_by_api.py <供应商名单.json> --categories 台
 
 **第三步：公开搜索（对 API 未命中的公司）**
 
-用 WebSearch 逐一搜索。搜索渠道和技巧详见 `references/search_tips.md`，核心要点：
+未命中公司较多时（≥5 家），优先调用 `riskbird-cominfo-batch` 技能走风鸟批量查询；零星几家再用 WebSearch 逐家搜。渠道与技巧详见 `references/search_tips.md`，核心要点：
 
-- 搜索词：`"公司全名" 电话 联系方式`、`"公司全名" 中标 OR 成交 供应商`
-- 优先渠道：黄页类 → 企业征信（企查查/天眼查/启信宝）→ 政府采购网（能拿真实对接人）→ 官网
+- **批量优先（风鸟）**：调用 `riskbird-cominfo-batch` 技能，通过风鸟（riskbird.com）CDP 浏览器自动化批量提取电话/邮箱/地址/法人/注册资本，无需付费、无需 API Key。前置条件：用户 Chrome 已打开风鸟、CDP Proxy 运行（localhost:3456）、名单为 JSON 数组
+- **零星补漏（WebSearch）**：搜索词 `"公司全名" 电话 联系方式`、`"公司全名" 中标 OR 成交 供应商`
+- 优先渠道：风鸟（批量）→ 黄页类 → 企业征信（企查查/天眼查/启信宝）→ 政府采购网（能拿真实对接人）→ 官网
 - 每条结果提取：电话号码 + 法人/联系人 + 注册资本（用于身份备注）
 - 号码打码时用多来源交叉验证；无法确认时标注"未找到"，绝不填猜测号码
 
