@@ -50,6 +50,8 @@ CATEGORIES = {
 PRINTER_CIDS = [1000023, 1000025, 1000027, 1000029, 1000041]
 
 SESSION = requests.Session()
+# 绕过系统代理直连（避免代理导致 zhongcy.com TLS 握手失败）
+SESSION.trust_env = False
 SESSION.headers.update({
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

@@ -2,7 +2,9 @@
 
 ## 基础信息
 
-- **域名**：`https://mkt-bjzc.zhongcy.com`
+- **两个域名**：
+  - `https://mkt-bjzc.zhongcy.com` — 商品搜索、经销商查询（市场侧）
+  - `https://shop-bjzc.zhongcy.com` — 销售记录查询（订单/成交侧）
 - **认证**：无需登录，普通 HTTP 请求即可（带 Referer/Origin 头即可通过）
 - **platformId**：固定 `20`
 - **publishType**：固定 `10024`
@@ -42,6 +44,55 @@ POST /proxy/trade-service/mall/search/querySkuAgentListFromEs
 }
 ```
 返回：`data.itemAgentList.resultList` 是经销商列表，**每条直接含 `agentName` 和 `agentPhone`**——无需点击弹窗，这是抓包的关键发现。
+
+### 3. 销售记录（shop 域名，GET 方法）
+
+```
+GET https://shop-bjzc.zhongcy.com/proxy/trade-service/mall/order/querySkuSaleRecord
+```
+
+Query 参数：
+```
+pageNum=1&pageSize=100&platformId=20&skuId=4272875
+```
+
+- **方法**：GET（query 参数），与其他两个 POST 接口不同
+- **域名**：`shop-bjzc.zhongcy.com`（订单侧，非 mkt）
+- 参数：`pageNum` 页码、`pageSize` 每页条数、`platformId=20`、`skuId` 商品ID
+
+**返回结构（已实测）**：
+```json
+{
+  "code": "0",
+  "msg": "查询成功",
+  "data": {
+    "pageNum": 14,
+    "pageSize": 10,
+    "totalCount": 131,
+    "totalPageCount": 14,
+    "result": [
+      {
+        "organizeId": 19231,
+        "organizeName": "北京市平谷区投资促进服务中心本级",   // 采购单位
+        "shopId": 610,
+        "shopName": "北京绿都畅达人才科技发展有限公司",       // 供应商
+        "skuNum": 1,                                          // 采购数量
+        "sellPrice": 5900.00000,                              // 采购单价(元)
+        "orderTime": "2025-01-21 11:14:49"                    // 成交时间
+      }
+    ],
+    "lastPage": true, "firstPage": false, "prevPage": 13, "nextPage": 15
+  }
+}
+```
+
+**字段映射**（销售记录 → 建表列）：
+- `organizeName` → 采购单位
+- `shopName` → 供应商
+- `skuNum` → 采购数量
+- `sellPrice` → 采购单价（元）
+- `orderTime` → 成交时间
+- 型号：记录里**没有型号字段**，需用商品搜索得到的 `skuName` 补
 
 ## 品类 cid 对照表
 
