@@ -73,6 +73,7 @@ def post_json(url, payload, retries=3):
             return d
         except Exception:
             time.sleep(0.5 * (i + 2))
+    print(f"⚠️ 请求失败（已重试 {retries} 次）：{url}")
     return None
 
 
