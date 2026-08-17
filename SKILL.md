@@ -1,6 +1,6 @@
 ---
-name: jinghuayuncai-dealer-contact
-slug: jinghuayuncai-dealer-contact
+name: jinghuayuncai-toolkit
+slug: jinghuayuncai-toolkit
 displayName: 京华云采工具包
 version: 1.1.0
 summary: 获取京华云采经销商联系方式与销售数据：名单补电话 + 按产品/品类/品牌查经销商 + 拉销售成交记录

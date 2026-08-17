@@ -48,7 +48,7 @@
 
 ### 方式一：手动解压（推荐）
 
-1. 下载本仓库，把 `jinghuayuncai-dealer-contact` 文件夹放进用户技能目录：
+1. 下载本仓库，把 `jinghuayuncai-toolkit` 文件夹放进用户技能目录：
 
    | 系统 | 目录 |
    |------|------|
@@ -82,7 +82,7 @@ pip install requests openpyxl pandas
 ## 目录结构
 
 ```
-jinghuayuncai-dealer-contact/
+jinghuayuncai-toolkit/
 ├── SKILL.md                          # 技能核心说明（触发词、工作流）
 ├── scripts/
 │   ├── query_suppliers_by_api.py     # 名单反向匹配（官网 API 查电话）
