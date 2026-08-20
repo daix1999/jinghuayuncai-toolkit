@@ -136,7 +136,11 @@ def main():
         sku = a.get("skuId")
         if sku and sku not in seen:
             seen[sku] = a
-    sku_ids = list(seen.keys())
+    all_sku_ids = list(seen.keys())
+
+    # 排除已彻底下架商品（不在索引 = 平台已移除、无商品名，不参与统计，降低数据量）
+    sku_ids = [s for s in all_sku_ids if str(s) in index]
+    n_offline = len(all_sku_ids) - len(sku_ids)
     if args.max_skus and args.max_skus > 0:
         sku_ids = sku_ids[:args.max_skus]
 
@@ -210,11 +214,13 @@ def main():
     # 4. 输出
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         overview = pd.DataFrame({
-            "指标": ["经销商", "电话", "销售区域", "代理商品数", "有成交商品", "零成交商品",
+            "指标": ["经销商", "电话", "销售区域", "代理商品数(统计)", "已下架商品(已排除)",
+                    "有成交商品", "零成交商品",
                     "代理商品总成交(台)", "代理商品总成交(元)",
                     "该经销商成交(台)", "该经销商成交(元)",
                     "台数份额%", "金额份额%", "客户数"],
-            "数值": [dealer, phone, sales_area, len(sku_ids), len(sold_skus), len(sku_ids) - len(sold_skus),
+            "数值": [dealer, phone, sales_area, len(sku_ids), n_offline,
+                    len(sold_skus), len(sku_ids) - len(sold_skus),
                     total_qty, round(total_amt, 2), x_qty, round(x_amt, 2),
                     round(share_qty, 1), round(share_amt, 1), n_customers],
         })
@@ -228,7 +234,12 @@ def main():
     print("=" * 60)
     print(f"业务穿透：{dealer}")
     print(f"  电话：{phone} | 销售区域：{sales_area}")
-    print(f"  代理商品：{len(sku_ids)} 个，其中实际卖出 {len(sold_skus)} 个（{len(sold_skus)/len(sku_ids)*100:.0f}%）")
+    print(f"  代理商品：共 {len(sku_ids) + n_offline} 个（已排除彻底下架 {n_offline} 个，统计 {len(sku_ids)} 个）")
+    if len(sku_ids) == 0:
+        print("  ⚠️ 该经销商代理的商品均已彻底下架，无在售数据可统计")
+        print(f"\n报告已保存：{out_path}")
+        return
+    print(f"  其中实际卖出 {len(sold_skus)} 个（{len(sold_skus)/len(sku_ids)*100:.0f}%）")
     print(f"  📦 代理商品总盘子：{total_qty} 台 / ¥{total_amt:,.0f}")
     print(f"  💰 该经销商卖出：{x_qty} 台 / ¥{x_amt:,.0f}（占盘子 {share_qty:.1f}% 台 / {share_amt:.1f}% 金额）")
     print(f"  客户：{n_customers} 家")
