@@ -45,6 +45,11 @@ POST /proxy/trade-service/mall/search/querySkuAgentListFromEs
 ```
 返回：`data.itemAgentList.resultList` 是经销商列表，**每条直接含 `agentName` 和 `agentPhone`**——无需点击弹窗，这是抓包的关键发现。
 
+> 🚀 **重要优化（2026-08-20 实测）**：`shopName` 参数支持**按公司名定向反查**——
+> **不带 `skuId`、只带 `shopName`**，接口直接返回该公司在平台全部商品的代理记录，第 1 页即含 `agentPhone`。
+> 意味着补电话不必遍历全部商品（原方案 500+ 次请求），一家公司 1-2 次请求即可。
+> 实现见 `scripts/query_suppliers_by_name.py`；品牌方（如 联想(北京)有限公司）不在经销商体系，命中 0 条属正常。
+
 ### 3. 销售记录（shop 域名，GET 方法）
 
 ```

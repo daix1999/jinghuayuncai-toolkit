@@ -27,7 +27,8 @@ import tempfile
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-QUERY_SCRIPT = os.path.join(HERE, "query_suppliers_by_api.py")
+QUERY_SCRIPT = os.path.join(HERE, "query_suppliers_by_api.py")          # 兜底：遍历全部商品
+QUERY_BY_NAME_SCRIPT = os.path.join(HERE, "query_suppliers_by_name.py")  # 快路径：按公司名定向反查
 FILL_SCRIPT = os.path.join(HERE, "fill_phones.py")
 
 
@@ -100,7 +101,7 @@ def main():
         return
     print(f"  发现 {len(empty_names)} 家电话为空")
 
-    # 2. API 查询
+    # 2. API 查询（快路径优先：按公司名反查，一家 1-2 次请求，不遍历全部商品）
     print("\n步骤 2/3：官网 API 查询电话...")
     tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
     json.dump(empty_names, tmp, ensure_ascii=False)
@@ -108,16 +109,34 @@ def main():
     names_file = tmp.name
     api_result_file = names_file.replace('.json', '_api.json')
 
+    # 2a. 快路径：按公司名定向反查（新，快 50-100 倍）
     subprocess.run(
-        [sys.executable, QUERY_SCRIPT, names_file,
-         "--categories", args.categories, "--out", api_result_file],
+        [sys.executable, QUERY_BY_NAME_SCRIPT, names_file, "--out", api_result_file],
         check=False,
     )
-
     api_result = {}
     if os.path.exists(api_result_file):
         with open(api_result_file, 'r', encoding='utf-8') as f:
             api_result = json.load(f)
+
+    # 2b. 兜底：快路径未命中的公司，再遍历商品（原方案，仅少量）
+    remain = [n for n in empty_names if n not in api_result]
+    if remain:
+        print(f"  ⏳ 快路径未命中 {len(remain)} 家，用遍历商品兜底...")
+        remain_file = names_file.replace('.json', '_remain.json')
+        with open(remain_file, 'w', encoding='utf-8') as f:
+            json.dump(remain, f, ensure_ascii=False)
+        full_file = api_result_file.replace('.json', '_full.json')
+        subprocess.run(
+            [sys.executable, QUERY_SCRIPT, remain_file,
+             "--categories", args.categories, "--out", full_file],
+            check=False,
+        )
+        if os.path.exists(full_file):
+            with open(full_file, 'r', encoding='utf-8') as f:
+                api_result.update(json.load(f))
+            os.remove(full_file)
+        os.remove(remain_file)
 
     # 转成 mapping 格式（未命中的也保留，标注"未匹配"）
     mapping = {}

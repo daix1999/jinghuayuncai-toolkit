@@ -32,17 +32,20 @@ python scripts/run.py 名单.xlsx --name-col 供应商名称 --phone-col 联系�
 3. 电话为空判断：`isna()` 或值为空字符串 / `'nan'` / `'None'`
 4. 提取空号公司的名单，存成 JSON 数组 `["公司A", "公司B", ...]`
 
-**第二步：通过京华云采官网 API 查询（零成本，最优先）**
+**第二步：通过京华云采官网 API 查询（零成本，最优先）—— 快路径：按公司名反查**
 
-用 `scripts/query_suppliers_by_api.py` 抓包查询：
+**省时关键**（2026-08-20 实测）：`querySkuAgentListFromEs` 支持 `shopName` 参数，**不带 skuId 只带 shopName 就能按公司名定向反查**，一家公司 1-2 次请求直接拿电话，**不用遍历全部商品**（原方案 500+ 次请求）。优先用 `scripts/query_suppliers_by_name.py`：
 
 ```bash
-python scripts/query_suppliers_by_api.py <供应商名单.json> --categories 台,笔,服,印 --out api_match_result.json
+python scripts/query_suppliers_by_name.py <供应商名单.json> --out api_match_result.json
 ```
 
-- 脚本遍历各品类（台式/笔记本/服务器/打印机）全部商品的经销商列表，按 `agentName` 精确匹配名单
-- API 端点与参数详见 `references/api_docs.md`（核心：`querySkuAgentListFromEs` 直接返回 `agentPhone`）
-- 命中 → 电话来源标注「京华云采API」，绿色
+- 一家公司 1 次请求（第 1 页即含 agentPhone），命中率极高；品牌方（联想官方等）命中 0 条属正常
+- 快路径未命中的公司，才用 `scripts/query_suppliers_by_api.py` 遍历商品兜底（旧方案）：
+  ```bash
+  python scripts/query_suppliers_by_api.py <未命中名单.json> --categories 台,笔,服,印 --out api_full_result.json
+  ```
+- 命中 → 电话来源标注「京华云采API(反查)」或「京华云采API」，绿色
 - 未命中 → 进入第三步公开搜索
 
 **第三步：公开搜索 —— ⚠️ 默认走风鸟批量，不逐家 WebSearch**
@@ -245,8 +248,8 @@ python scripts/analyze_sales.py 开天M70d销售记录.xlsx --out 开天M70d分�
 **场景：领导给了 100 家供应商名单，电话列 34 家空白，需补全。**
 
 1. 读名单提取 34 家空号公司，存 `companies.json`
-2. 官网 API 查电话：`python scripts/query_suppliers_by_api.py companies.json --categories 台,笔,服,印 --out api_match.json` → 命中 12 家
-3. 公开搜索补漏：剩余 22 家（≥5 家），**默认调 `riskbird-cominfo-batch` 批量查**（不逐家 WebSearch），得 phone / source / contact
+2. 官网 API 反查（快）：`python scripts/query_suppliers_by_name.py companies.json --out api_match.json` → 命中 28 家；未命中 6 家再用 `query_suppliers_by_api.py` 兜底
+3. 公开搜索补漏：仍未命中的公司（≥5 家），**默认调 `riskbird-cominfo-batch` 批量查**（不逐家 WebSearch），得 phone / source / contact
 4. 合并映射 `mapping.json`
 5. 填充副本：`python scripts/fill_phones.py 名单.xlsx mapping.json --name-col 供应商名称 --phone-col 联系电话` → 输出 `名单_已填充.xlsx`
 6. 交付：展示副本，汇总「填充 N 家 / 未找到 K 家」，点出高价值供应商
