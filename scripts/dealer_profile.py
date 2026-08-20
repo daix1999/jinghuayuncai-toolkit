@@ -103,13 +103,13 @@ def main():
         it = index.get(str(sku_id))
         if it:
             return f"{it.get('brandCh','')}{it.get('brandEn','')} {it.get('skuName','')}".strip()
-        return "未知商品"
+        return "已下架商品"  # 不在索引 = 已彻底下架，平台不再提供名称
 
     def prod_brand(sku_id):
         it = index.get(str(sku_id))
         if it:
             return f"{it.get('brandCh','')}{it.get('brandEn','')}".strip() or "未知品牌"
-        return "未知品牌"
+        return "已下架"
 
     # 1. 反查全部代理商品
     if not quiet:

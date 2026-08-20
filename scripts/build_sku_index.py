@@ -43,8 +43,9 @@ SESSION.headers.update({
 })
 
 
-def get_products(cid):
-    """获取某 cid 下所有商品（含 skuId/skuName/brand）。cid=None 时不带 cid 全量抓。"""
+def get_products(cid, sale_status=None):
+    """获取某 cid 下所有商品（含 skuId/skuName/brand）。cid=None 时不带 cid 全量抓。
+    sale_status=0 时抓「暂下架」商品（补索引覆盖）。"""
     products = []
     page = 1
     page_size = 100
@@ -56,6 +57,8 @@ def get_products(cid):
         }
         if cid is not None:
             payload["cid"] = cid
+        if sale_status is not None:
+            payload["saleStatus"] = sale_status
         try:
             d = SESSION.post(SEARCH_URL, json=payload, timeout=30).json()
         except Exception as e:
@@ -74,6 +77,7 @@ def get_products(cid):
                 "brandCh": it.get("brandNameCh", ""),
                 "brandEn": it.get("brandNameEn", ""),
                 "cid": it.get("cid", cid),
+                "saleStatus": it.get("saleStatus", sale_status or 1),
             })
         total = int(d["data"].get("totalCount", 0) or 0)
         if page * page_size >= total:
@@ -108,16 +112,18 @@ def main():
 
     total_new = 0
     if args.all:
-        # 全品类模式：一次遍历全部商品（约 1 万条，几分钟）
-        products = get_products(None)
-        new = [p for p in products if str(p["skuId"]) not in index]
-        for p in new:
-            index[str(p["skuId"])] = {
-                "skuName": p["skuName"], "brandCh": p["brandCh"],
-                "brandEn": p["brandEn"], "cid": p["cid"],
-            }
-        total_new = len(new)
-        print(f"全品类：{len(products)} 个商品，新增 {len(new)} 条")
+        # 全品类模式：先抓在售（约1万条），再抓暂下架（saleStatus=0，约225条）补覆盖
+        for st, label in [(None, "在售"), (0, "暂下架")]:
+            products = get_products(None, sale_status=st)
+            new = [p for p in products if str(p["skuId"]) not in index]
+            for p in new:
+                index[str(p["skuId"])] = {
+                    "skuName": p["skuName"], "brandCh": p["brandCh"],
+                    "brandEn": p["brandEn"], "cid": p["cid"],
+                    "saleStatus": p["saleStatus"],
+                }
+            total_new += len(new)
+            print(f"全品类[{label}]：{len(products)} 个商品，新增 {len(new)} 条")
     else:
         for cid in get_cid_list():
             products = get_products(cid)
