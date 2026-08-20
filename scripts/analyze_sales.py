@@ -10,20 +10,25 @@
 输出：多 Sheet 分析报告 Excel，每个 Sheet = 数据表格 + 自动生成的文字分析说明
 
 Sheet 结构：
-    Sheet1  销售明细          —— 原始成交数据
+    Sheet1  销售明细          —— 原始成交数据（品牌/型号/配置/单位/供应商/数量/单价/时间）
     Sheet2  整体分析报告      —— 文字为主的总结报告（概览/品牌/买方/供应商/价格/趋势/建议）
     Sheet3  品牌对比分析      —— 不同品牌之间对比（数据 + 说明）
-    Sheet4  型号分析          —— 品牌 × 型号对比（数据 + 说明）
-    Sheet5  单位类型分布      —— 政府/学校/医院/企业（数据 + 说明）
-    Sheet6  单位×供应商往来   —— 多次往来关系（数据 + 说明）
-    Sheet7  供应商占比        —— 垄断度判断（数据 + 说明）
-    Sheet8  月度销售趋势      —— 环比增长（数据 + 说明）
-    Sheet9  TOP采购单位       —— 大客户排行（数据 + 说明）
-    Sheet10 价格分析          —— 均价/区间/波动（数据 + 说明）
-    Sheet11 采购频次          —— 大单 vs 频次单（数据 + 说明）
+    Sheet4  型号分析          —— 品牌 × 型号 × 配置（数据 + 说明）
+    Sheet5  配置价格稳定性    —— 同型号同配置价格是否稳定，波动项单独说明
+    Sheet6  单位类型分布      —— 政府/学校/医院/企业（数据 + 说明）
+    Sheet7  单位×供应商往来   —— 多次往来关系（数据 + 说明）
+    Sheet8  供应商占比        —— 垄断度判断（数据 + 说明）
+    Sheet9  月度销售趋势      —— 环比增长（数据 + 说明）
+    Sheet10 TOP采购单位       —— 大客户排行（数据 + 说明）
+    Sheet11 价格分析          —— 均价/区间/波动（数据 + 说明）
+    Sheet12 采购频次          —— 大单 vs 频次单（数据 + 说明）
+
+说明：同一型号会有不同配置，价格差异多由配置不同导致（CPU/内存/硬盘/显卡/显示器），
+      因此价格分析按「型号+配置」分组；同配置下价格若仍波动，则单独标注为议价信号。
 """
 import argparse
 import os
+import re
 import sys
 
 import pandas as pd
@@ -62,6 +67,26 @@ def classify_org(name):
     return '其他/事业单位'
 
 
+def split_model_config(model_str):
+    """把型号字符串拆分为 (型号, 配置)。
+
+    例：'联想开天M70d G1s HD-D001 台式计算机(3A6000 8G 256G 1T 2G独显 23.8寸显示器)'
+        -> ('联想开天M70d G1s HD-D001', '3A6000 8G 256G 1T 2G独显 23.8寸显示器')
+    括号内为配置（CPU/内存/硬盘/显卡/显示器），括号外为型号主体。
+    """
+    s = str(model_str).strip()
+    m = re.search(r'[（(](.*?)[)）]', s)
+    if m:
+        config = m.group(1).strip()
+        model = s[:m.start()].strip()
+    else:
+        config = ''
+        model = s
+    # 去掉型号里的品类词后缀（台式计算机/便携式计算机等）
+    model = re.sub(r'(台式计算机|便携式计算机|笔记本电脑|笔记本|一体机|显示器|台式机)$', '', model).strip()
+    return model, config
+
+
 def append_insights(ws, start_row, title, insights, col=1):
     """在 sheet 的 start_row 下方写入分析说明文本块"""
     ws.cell(row=start_row, column=col, value=title).font = Font(bold=True, size=12)
@@ -81,7 +106,7 @@ def write_data_plus_insights(writer, sheet_name, df_data, insights):
 
 def gen_overall_report(df, n, total_qty, total_amt, n_org, n_shop,
                        type_stat, shop_stat, monthly, org_stat, prices,
-                       brand_stat, model_stat, freq_stat, model_col):
+                       brand_stat, model_stat, freq_stat, model_col, price_stab=None):
     """生成 Sheet2 整体分析报告（文字为主）"""
     L = []
     L.append('【京华云采销售数据分析报告】')
@@ -116,10 +141,19 @@ def gen_overall_report(df, n, total_qty, total_amt, n_org, n_shop,
              ('，较集中（头部有壁垒）。' if cr3 > 60 else '，较分散（有切入空间）。'))
     L.append('')
     L.append('五、价格信号')
-    L.append(f'  成交均价 ¥{prices.mean():,.0f}，区间 ¥{prices.min():,.0f} - ¥{prices.max():,.0f}，'
-             f'中位数 ¥{prices.median():,.0f}。')
-    spread = (prices.max() - prices.min()) / prices.mean() * 100
-    L.append(f'  价格波动幅度 {spread:.0f}%' + ('，价格弹性大（议价空间存在）。' if spread > 10 else '，价格稳定（市场定价成熟）。'))
+    L.append(f'  成交均价 ¥{prices.mean():,.0f}，总体区间 ¥{prices.min():,.0f} - ¥{prices.max():,.0f}。')
+    L.append('  ※ 价格差异主要来自配置不同（CPU/内存/硬盘/显卡/显示器），须按「型号+配置」对比价格。')
+    if price_stab is not None and len(price_stab) > 0:
+        stable_n = int(price_stab['价格状态'].isin(['稳定', '基本稳定(微幅)']).sum())
+        L.append(f'  按「型号+配置」对比：{stable_n}/{len(price_stab)} 个组合价格稳定。')
+        unstable = price_stab[price_stab['价格状态'] == '⚠️ 有波动']
+        if len(unstable) > 0:
+            L.append(f'  ⚠️ 同配置价格有波动的组合 {len(unstable)} 个（存在议价空间）：')
+            for _, r in unstable.head(3).iterrows():
+                cfg = f'（{r["配置"]}）' if r.get('配置') else ''
+                L.append(f'    · {str(r["型号"])[:16]}{cfg}：¥{r["最低价"]:,.0f}-¥{r["最高价"]:,.0f}（波动 {r["波动%"]:.0f}%）')
+        else:
+            L.append('  未发现同配置价格波动，市场定价规范。')
     L.append('')
     L.append('六、趋势与节奏')
     if len(monthly) > 0:
@@ -167,6 +201,11 @@ def analyze(input_path, out_path):
     df['成交时间'] = pd.to_datetime(df[time_col], errors='coerce')
     df['月份'] = df['成交时间'].dt.strftime('%Y-%m')
     df['单位类型'] = df[org_col].astype(str).apply(classify_org)
+    # 型号拆分为「型号名 + 配置」（括号内为配置，价格差异多由配置不同导致）
+    if model_col:
+        _splits = df[model_col].astype(str).apply(split_model_config)
+        df['型号名'] = _splits.apply(lambda x: x[0])
+        df['配置'] = _splits.apply(lambda x: x[1])
 
     n = len(df)
     total_qty = int(df['采购数量'].sum())
@@ -190,16 +229,45 @@ def analyze(input_path, out_path):
         ).sort_values('金额', ascending=False)
         brand_stat['金额占比'] = (brand_stat['金额'] / total_amt * 100).round(1)
 
-    # 型号分析（品牌×型号）
+    # 型号分析（品牌 × 型号 × 配置）
     model_stat = None
     if model_col:
-        gb_cols = [brand_col, model_col] if brand_col else [model_col]
-        model_stat = df.groupby(gb_cols).agg(
-            销量=('采购数量', 'sum'), 金额=('成交金额', 'sum'),
-            记录数=('采购单位', 'count'),
-        ).sort_values('销量', ascending=False).reset_index()
-        model_stat.columns = (['品牌', '型号', '销量', '金额', '记录数']
-                              if brand_col else ['型号', '销量', '金额', '记录数'])
+        gb_cols = ([brand_col] if brand_col else []) + ['型号名', '配置']
+        agg_map = {
+            '销量': ('采购数量', 'sum'), '金额': ('成交金额', 'sum'),
+            '记录数': ('采购单位', 'count'), '均价': ('采购单价', 'mean'),
+            '最低价': ('采购单价', 'min'), '最高价': ('采购单价', 'max'),
+        }
+        model_stat = df.groupby(gb_cols).agg(**agg_map).sort_values('销量', ascending=False).reset_index()
+        cols = (['品牌'] if brand_col else []) + ['型号', '配置', '销量', '金额', '记录数', '均价', '最低价', '最高价']
+        model_stat.columns = cols
+        model_stat['均价'] = model_stat['均价'].round(0)
+
+    # 配置价格稳定性：同一 型号+配置 下价格是否稳定（价格波动多为配置不同所致）
+    price_stab = None
+    if model_col:
+        gb_cols = ([brand_col] if brand_col else []) + ['型号名', '配置']
+        grp = df.groupby(gb_cols)['采购单价']
+        price_stab = pd.DataFrame({
+            '记录数': grp.count(), '均价': grp.mean().round(0),
+            '最低价': grp.min(), '最高价': grp.max(),
+            '不同价格数': grp.nunique(),
+        }).reset_index()
+        price_stab['波动幅度'] = price_stab['最高价'] - price_stab['最低价']
+        price_stab['波动%'] = (price_stab['波动幅度'] / price_stab['均价'].replace(0, pd.NA) * 100).round(1)
+
+        def _judge_stab(r):
+            if r['不同价格数'] <= 1:
+                return '稳定'
+            if r['波动幅度'] <= 100 or r['波动%'] <= 2:
+                return '基本稳定(微幅)'
+            return '⚠️ 有波动'
+
+        price_stab['价格状态'] = price_stab.apply(_judge_stab, axis=1)
+        price_stab = price_stab.sort_values('波动幅度', ascending=False).reset_index(drop=True)
+        cols = (['品牌'] if brand_col else []) + ['型号', '配置', '记录数', '均价', '最低价', '最高价',
+                                                  '不同价格数', '波动幅度', '波动%', '价格状态']
+        price_stab.columns = cols
 
     # 单位类型
     type_stat = df.groupby('单位类型').agg(
@@ -268,19 +336,38 @@ def analyze(input_path, out_path):
     def insights_model():
         if model_stat is None:
             return ['数据中无型号字段，跳过型号分析。']
-        lines = [f'共 {len(model_stat)} 个型号参与成交。']
+        lines = [f'共 {len(model_stat)} 个「型号×配置」参与成交。']
         t1 = model_stat.iloc[0]
-        lines.append(f'最走量型号【{str(t1["型号"])[:30]}】：{int(t1["销量"])} 台、¥{t1["金额"]:,.0f}。')
+        cfg = f'（{t1["配置"]}）' if t1.get('配置') else ''
+        lines.append(f'最走量款【{str(t1["型号"])[:22]}{cfg}】：{int(t1["销量"])} 台、¥{t1["金额"]:,.0f}、均价 ¥{t1["均价"]:,.0f}。')
         if len(model_stat) > 1:
             top3_qty = model_stat['销量'].head(3).sum()
-            lines.append(f'TOP3 型号销量合计 {int(top3_qty)} 台（占总量 {top3_qty/total_qty*100:.1f}%），'
+            lines.append(f'TOP3 销量合计 {int(top3_qty)} 台（占总量 {top3_qty/total_qty*100:.1f}%），'
                          + ('集中度高，主攻这几款即可。' if top3_qty/total_qty > 0.5 else '型号较分散，需多款备货。'))
         if brand_col:
             for b in brand_stat.index[:2]:
                 sub = model_stat[model_stat['品牌'] == b]
                 if len(sub):
                     m = sub.iloc[0]
-                    lines.append(f'【{b}】下走量款：{str(m["型号"])[:24]}（{int(m["销量"])} 台）。')
+                    lines.append(f'【{b}】下走量款：{str(m["型号"])[:20]}（{int(m["销量"])} 台，均价 ¥{m["均价"]:,.0f}）。')
+        return lines
+
+    def insights_pricestab():
+        if price_stab is None:
+            return ['数据中无型号字段，跳过配置价格稳定性分析。']
+        stable_n = int(price_stab['价格状态'].isin(['稳定', '基本稳定(微幅)']).sum())
+        lines = [f'共 {len(price_stab)} 个「型号×配置」组合，其中 {stable_n} 个价格稳定（同配置成交价一致或仅微幅浮动）。']
+        lines.append('价格差异主要来自配置不同（CPU/内存/硬盘/显卡/显示器），属正常。')
+        unstable = price_stab[price_stab['价格状态'] == '⚠️ 有波动']
+        if len(unstable) > 0:
+            lines.append(f'⚠️ 发现 {len(unstable)} 个「同一配置价格明显波动」，需单独关注：')
+            for _, r in unstable.head(5).iterrows():
+                cfg = f'（{r["配置"]}）' if r.get('配置') else ''
+                lines.append(f'  · {str(r["型号"])[:18]}{cfg}：¥{r["最低价"]:,.0f} - ¥{r["最高价"]:,.0f}'
+                             f'（波动 {r["波动幅度"]:,.0f} 元 / {r["波动%"]:.0f}%）')
+            lines.append('同配置价格明显波动意味着存在议价空间或供货差异，是价格谈判的突破口。')
+        else:
+            lines.append('未发现同配置价格明显波动，市场定价规范。')
         return lines
 
     def insights_type():
@@ -354,7 +441,8 @@ def analyze(input_path, out_path):
         if brand_col:
             out_parts.append(('品牌', df[brand_col]))
         if model_col:
-            out_parts.append(('型号', df[model_col]))
+            out_parts.append(('型号', df['型号名']))
+            out_parts.append(('配置', df['配置']))
         out_parts.extend([
             ('采购单位', df[org_col]),
             ('供应商', df[shop_col]),
@@ -368,7 +456,7 @@ def analyze(input_path, out_path):
         # Sheet2 整体分析报告（文字为主）
         report = gen_overall_report(df, n, total_qty, total_amt, n_org, n_shop,
                                     type_stat, shop_stat, monthly, org_stat, prices,
-                                    brand_stat, model_stat, freq_stat, model_col)
+                                    brand_stat, model_stat, freq_stat, model_col, price_stab)
         ws2 = writer.book.create_sheet('整体分析报告')
         ws2.column_dimensions['A'].width = 110
         for i, line in enumerate(report, 1):
@@ -378,9 +466,12 @@ def analyze(input_path, out_path):
         # Sheet3 品牌对比
         if brand_stat is not None:
             write_data_plus_insights(writer, '品牌对比分析', brand_stat.reset_index(), insights_brand())
-        # Sheet4 型号分析
+        # Sheet4 型号分析（型号×配置）
         if model_stat is not None:
             write_data_plus_insights(writer, '型号分析', model_stat, insights_model())
+        # Sheet4b 配置价格稳定性
+        if price_stab is not None:
+            write_data_plus_insights(writer, '配置价格稳定性', price_stab, insights_pricestab())
         # Sheet5 单位类型
         write_data_plus_insights(writer, '单位类型分布', type_stat.reset_index(), insights_type())
         # Sheet6 多次往来
@@ -398,7 +489,7 @@ def analyze(input_path, out_path):
 
     # 控制台摘要
     print('\n■ 主要洞察：')
-    for fn in (insights_brand, insights_type, insights_shop, insights_repeat):
+    for fn in (insights_brand, insights_type, insights_shop, insights_repeat, insights_pricestab):
         for line in fn():
             print('  ' + line)
         print()
