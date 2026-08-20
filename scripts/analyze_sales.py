@@ -173,7 +173,7 @@ def gen_overall_report(df, n, total_qty, total_amt, n_org, n_shop,
     return L
 
 
-def analyze(input_path, out_path):
+def analyze(input_path, out_path, quiet=False):
     df = pd.read_excel(input_path)
     if df.empty:
         print('❌ 数据为空，无法分析')
@@ -528,21 +528,22 @@ def analyze(input_path, out_path):
         write_analysis_sheet(writer, '价格分析', price_stat, detail_price, insights_price())
         write_analysis_sheet(writer, '采购频次', freq_stat, detail_freq, insights_freq())
 
-    # 控制台摘要（带关键订单）
-    print('\n■ 主要洞察：')
-    for fn in (insights_brand, insights_type, insights_shop, insights_repeat):
-        for line in fn():
-            print('  ' + line)
-        print()
+    # 控制台摘要（带关键订单）—— --quiet 时跳过，只留完成行
+    if not quiet:
+        print('\n■ 主要洞察：')
+        for fn in (insights_brand, insights_type, insights_shop, insights_repeat):
+            for line in fn():
+                print('  ' + line)
+            print()
 
-    # 控制台：价格波动订单（最低价 vs 最高价对比）
-    if detail_stab is not None and len(detail_stab) > 0:
-        print('■ ⚠️ 同配置价格波动（最低价 vs 最高价，议价空间）：')
-        for _, r in detail_stab.iterrows():
-            tag = '🔻最低' if r['价格档'] == '最低价' else '🔺最高'
-            print(f'  {tag} {str(r["型号"])[:14]}（{str(r["配置"])[:22]}）| {r["采购单位"][:20]} | '
-                  f'{r["供应商"][:14]} | {int(r["采购数量"])}台 ¥{r["采购单价(元)"]:,.0f} | {r["成交时间"]}')
-        print()
+        # 控制台：价格波动订单（最低价 vs 最高价对比）
+        if detail_stab is not None and len(detail_stab) > 0:
+            print('■ ⚠️ 同配置价格波动（最低价 vs 最高价，议价空间）：')
+            for _, r in detail_stab.iterrows():
+                tag = '🔻最低' if r['价格档'] == '最低价' else '🔺最高'
+                print(f'  {tag} {str(r["型号"])[:14]}（{str(r["配置"])[:22]}）| {r["采购单位"][:20]} | '
+                      f'{r["供应商"][:14]} | {int(r["采购数量"])}台 ¥{r["采购单价(元)"]:,.0f} | {r["成交时间"]}')
+            print()
 
     print(f'\n分析完成，报告已保存：{out_path}')
     with pd.ExcelFile(out_path) as xf:
@@ -553,6 +554,7 @@ def main():
     parser = argparse.ArgumentParser(description='京华云采销售数据分析（数据+订单明细+说明）')
     parser.add_argument('input', help='销售记录 xlsx（fetch_sale_records.py 的输出）')
     parser.add_argument('--out', default=None, help='分析报告输出路径（默认 原名_分析报告.xlsx）')
+    parser.add_argument('--quiet', action='store_true', help='安静模式：不打印洞察明细，只打印完成行（省 token）')
     args = parser.parse_args()
 
     input_path = os.path.abspath(args.input)
@@ -561,7 +563,7 @@ def main():
         sys.exit(1)
 
     out_path = args.out or input_path.rsplit('.', 1)[0] + '_分析报告.xlsx'
-    analyze(input_path, out_path)
+    analyze(input_path, out_path, quiet=args.quiet)
 
 
 if __name__ == '__main__':

@@ -2,6 +2,20 @@
 
 本项目的所有重要变更都记录在此文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.1] - 2026-08-20
+
+### 优化（降低 token 消耗）
+
+- **SKILL.md 瘦身**：289 行 → 约 70 行，详细工作流移至新增的 `references/workflows.md`，每次触发省约 5,000 token
+- **公开搜索默认走风鸟批量**：API 未命中 ≥5 家时默认调 `riskbird-cominfo-batch` 批量查，不再逐家 WebSearch（省最大头的 token）
+- **脚本 --quiet 模式**：`analyze_sales.py` / `fetch_sale_records.py` 新增 `--quiet`，只打印摘要，洞察明细/进度不进上下文
+
+### 文档
+
+- 新增 `references/workflows.md`：三大能力完整工作流、检查点、异常处理、输入规范、端到端案例
+
+---
+
 ## [1.4.0] - 2026-08-20
 
 ### 新增

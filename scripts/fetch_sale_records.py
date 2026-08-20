@@ -264,20 +264,24 @@ def main():
     parser.add_argument("--brand", default="", help="品牌名（如 联想），逗号分隔")
     parser.add_argument("--product", default="", help="产品关键词（如 开天M70d）")
     parser.add_argument("--out", default="销售记录.xlsx", help="输出 Excel 路径")
+    parser.add_argument("--quiet", action="store_true", help="安静模式：不打印进度明细，只打印完成行（省 token）")
     args = parser.parse_args()
 
     cat_keys = [k.strip() for k in args.category.split(",") if k.strip()]
     brands = [b.strip() for b in args.brand.split(",") if b.strip()]
     product_kw = args.product.strip()
+    quiet = args.quiet
 
-    print(f"筛选条件：品类={cat_keys or '全部'}，品牌={brands or '全部'}，产品={product_kw or '全部'}")
+    if not quiet:
+        print(f"筛选条件：品类={cat_keys or '全部'}，品牌={brands or '全部'}，产品={product_kw or '全部'}")
 
     cids = get_cid_list(cat_keys)
     all_products = []
     for cid in cids:
         prods = get_products(cid)
         all_products.extend(prods)
-        print(f"cid={cid}（{cid_to_name(cid)}）：{len(prods)} 个商品")
+        if not quiet:
+            print(f"cid={cid}（{cid_to_name(cid)}）：{len(prods)} 个商品")
 
     # 筛选商品
     filtered = []
@@ -287,14 +291,15 @@ def main():
         if product_kw and product_kw not in p["skuName"]:
             continue
         filtered.append(p)
-    print(f"筛选后 {len(filtered)} 个商品，开始爬取销售记录...")
+    if not quiet:
+        print(f"筛选后 {len(filtered)} 个商品，开始爬取销售记录...")
 
     all_records = []
     for idx, p in enumerate(filtered, 1):
         records = get_sale_records(p["skuId"])
         for rec in records:
             all_records.append(extract_record(rec, p["skuName"], p["brandName"], p["category"]))
-        if idx % 10 == 0:
+        if idx % 10 == 0 and not quiet:
             print(f"  [{idx}/{len(filtered)}] 已累计 {len(all_records)} 条销售记录")
         time.sleep(0.2)
 
