@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-京华云采经销商全景画像（代理商品 → 销售记录 → 客户 → 归集）
+京华云采经销商业务状态穿透（代理商品 → 交易记录 → 卖了多少 → 卖给谁 → 占比）
 
 用法：
     python dealer_profile.py "北京宏鹏电脑有限公司" [--out 画像.xlsx] [--index sku_index.json] [--max-skus 100]
 
 数据链路（2026-08-20 打通）：
-    反查(shopName) → 代理商品 skuId 列表 → 商品索引(sku_index.json) 补品牌/商品名
-                    → 每个 skuId 查销售记录 → 归集 shopName==该经销商的成交 → 客户清单
+    反查(shopName) → 代理商品 skuId 列表
+                  → 每个 skuId 查销售记录：统计「商品总成交」和「该经销商成交」
+                  → 算出该经销商在代理商品盘子里的份额（台数/金额占比）
+                  → 客户归集（卖给谁）
 
-输出 Excel：
-    经销商概览 / 代理商品清单 / 品牌分布 / 成交记录 / 客户汇总 / 零成交商品(机会)
+核心输出：
+    - 业务状态穿透：代理商品总盘子 vs 该经销商成交 → 份额（台数%/金额%）
+    - 商品级占比：每个代理商品上，该经销商占多少（代理不卖/主卖/被抢）
+    - 成交记录/客户清单/零成交商品
 
-说明：
-    - 销售记录里的 shopName 才是"实际卖出方"，反查的 agentName 是"代理方"；
-      归集成交时按 shopName==经销商 过滤，才是它自己卖的客户
-    - 商品索引由 build_sku_index.py 生成；索引没有的 skuId 标"未知商品"
+口径：
+    - 销售记录 shopName = 实际卖出方；只统计 shopName==该经销商 的成交，才是它自己卖的
+    - "代理商品总成交" = 该经销商代理的全部商品在平台上的成交总量（它可参与的总盘子）
 """
 import argparse
 import json
 import os
 import sys
 import time
+from collections import Counter
 
 import pandas as pd
 import requests
 from openpyxl import load_workbook
-from openpyxl.styles import Font
 
 BASE = 'https://mkt-bjzc.zhongcy.com'
 SHOP = 'https://shop-bjzc.zhongcy.com'
@@ -47,7 +50,6 @@ SESSION.headers.update({
 
 
 def query_agent(shop_name, page=1, retries=3):
-    """反查经销商代理商品（分页）"""
     payload = {
         "platformId": PLATFORM_ID, "shopName": shop_name,
         "queryPage": {"platformId": PLATFORM_ID, "pageSize": 100, "pageNum": page},
@@ -65,7 +67,6 @@ def query_agent(shop_name, page=1, retries=3):
 
 
 def query_sale(sku_id, page=1, retries=3):
-    """查某商品的销售记录"""
     for i in range(retries):
         try:
             r = SESSION.get(SALE_URL, params={
@@ -81,19 +82,18 @@ def query_sale(sku_id, page=1, retries=3):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="京华云采经销商全景画像")
+    parser = argparse.ArgumentParser(description="京华云采经销商业务状态穿透")
     parser.add_argument("dealer", help="经销商公司名")
     parser.add_argument("--out", default=None, help="输出 Excel 路径")
     parser.add_argument("--index", default="sku_index.json", help="商品索引路径")
-    parser.add_argument("--max-skus", type=int, default=100, help="最多分析的商品数（默认 100，0=全部）")
+    parser.add_argument("--max-skus", type=int, default=100, help="最多分析的代理商品数（默认 100，0=全部）")
     parser.add_argument("--quiet", action="store_true", help="安静模式：只打印摘要")
     args = parser.parse_args()
 
     dealer = args.dealer.strip()
-    out_path = args.out or f"{dealer}_画像.xlsx"
+    out_path = args.out or f"{dealer}_业务穿透.xlsx"
     quiet = args.quiet
 
-    # 商品索引
     index = {}
     if os.path.exists(args.index):
         with open(args.index, "r", encoding="utf-8") as f:
@@ -111,7 +111,7 @@ def main():
             return f"{it.get('brandCh','')}{it.get('brandEn','')}".strip() or "未知品牌"
         return "未知品牌"
 
-    # 1. 反查：拿全部代理商品
+    # 1. 反查全部代理商品
     if not quiet:
         print(f"▶ 反查 {dealer} 的代理商品...")
     agents = []
@@ -131,7 +131,6 @@ def main():
         print(f"❌ 未查到 {dealer} 的代理记录（可能不是京华云采经销商，或为品牌方）")
         sys.exit(1)
 
-    # 去重 skuId（同一商品多条记录取第一条）
     seen = {}
     for a in agents:
         sku = a.get("skuId")
@@ -146,45 +145,44 @@ def main():
     if not quiet:
         print(f"  代理商品数（去重）：{len(sku_ids)} | 电话：{phone} | 销售区域：{sales_area}")
 
-    # 2. 每个 skuId 查销售记录，归集本经销商成交
-    sales = []  # 该经销商的成交（shopName==dealer）
-    all_sales = []  # 所有成交（含别人卖的）
+    # 2. 每个 skuId 查销售记录：累计「商品总成交」与「该经销商成交」
+    sku_stat = {}      # skuId -> {总销量,总金额,X销量,X金额}
+    dealer_sales = []  # 该经销商实际卖出的订单
     for i, sku in enumerate(sku_ids, 1):
         data = query_sale(sku)
         records = (data or {}).get("result") or []
+        st = sku_stat.setdefault(sku, {"总销量": 0, "总金额": 0.0, "X销量": 0, "X金额": 0.0})
         for rec in records:
-            info = {
-                "skuId": sku,
-                "商品": prod_info(sku),
-                "品牌": prod_brand(sku),
-                "采购单位": rec.get("organizeName", ""),
-                "供应商": rec.get("shopName", ""),
-                "数量": rec.get("skuNum", 0),
-                "单价(元)": rec.get("sellPrice", 0),
-                "金额(元)": round(rec.get("skuNum", 0) * rec.get("sellPrice", 0), 2),
-                "成交时间": str(rec.get("orderTime", ""))[:16],
-            }
-            all_sales.append(info)
+            qty = int(rec.get("skuNum") or 0)
+            amt = qty * float(rec.get("sellPrice") or 0)
+            st["总销量"] += qty
+            st["总金额"] += amt
             if rec.get("shopName") == dealer:
-                sales.append(info)
+                st["X销量"] += qty
+                st["X金额"] += amt
+                dealer_sales.append({
+                    "skuId": sku, "商品": prod_info(sku), "品牌": prod_brand(sku),
+                    "采购单位": rec.get("organizeName", ""),
+                    "数量": qty, "单价(元)": rec.get("sellPrice", 0),
+                    "金额(元)": round(amt, 2), "成交时间": str(rec.get("orderTime", ""))[:16],
+                })
         if not quiet and (i % 10 == 0 or i == len(sku_ids)):
-            print(f"  [{i}/{len(sku_ids)}] 已扫 {len(all_sales)} 条成交，其中本经销商 {len(sales)} 条")
+            print(f"  [{i}/{len(sku_ids)}] 已扫 {len(sku_stat)} 个商品，该经销商累计 {len(dealer_sales)} 笔")
         time.sleep(0.2)
 
-    df_sales = pd.DataFrame(sales) if sales else pd.DataFrame(columns=[
-        "skuId", "商品", "品牌", "采购单位", "供应商", "数量", "单价(元)", "金额(元)", "成交时间"])
+    # 3. 汇总：总盘子 vs 该经销商
+    total_qty = sum(s["总销量"] for s in sku_stat.values())      # 代理商品总盘子（台）
+    total_amt = sum(s["总金额"] for s in sku_stat.values())      # 代理商品总盘子（元）
+    x_qty = sum(s["X销量"] for s in sku_stat.values())           # 该经销商卖出（台）
+    x_amt = sum(s["X金额"] for s in sku_stat.values())           # 该经销商卖出（元）
+    share_qty = x_qty / total_qty * 100 if total_qty else 0
+    share_amt = x_amt / total_amt * 100 if total_amt else 0
 
-    # 3. 汇总
-    total_qty = int(df_sales["数量"].sum()) if len(df_sales) else 0
-    total_amt = df_sales["金额(元)"].sum() if len(df_sales) else 0
-    n_customers = df_sales["采购单位"].nunique() if len(df_sales) else 0
-    sold_skus = set(df_sales["skuId"]) if len(df_sales) else set()
-    zero_skus = [s for s in sku_ids if s not in sold_skus]  # 代理但无成交
+    sold_skus = {s for s, st in sku_stat.items() if st["X销量"] > 0}
+    n_customers = len({r["采购单位"] for r in dealer_sales})
 
-    # 品牌分布（代理维度）
-    from collections import Counter
-    brand_cnt = Counter(prod_brand(s) for s in sku_ids)
-    df_brand = pd.DataFrame(brand_cnt.items(), columns=["品牌", "代理商品数"]).sort_values("代理商品数", ascending=False)
+    df_sales = pd.DataFrame(dealer_sales) if dealer_sales else pd.DataFrame(
+        columns=["skuId", "商品", "品牌", "采购单位", "数量", "单价(元)", "金额(元)", "成交时间"])
 
     # 客户汇总
     if len(df_sales):
@@ -194,42 +192,52 @@ def main():
     else:
         df_cust = pd.DataFrame(columns=["采购单位", "次数", "数量", "金额"])
 
-    # 代理商品清单（含成交标记）
-    df_skus = pd.DataFrame([{
+    # 商品级占比表（核心：每个代理商品上这家占多少）
+    df_share = pd.DataFrame([{
         "skuId": s, "商品": prod_info(s), "品牌": prod_brand(s),
-        "供货价(元)": seen[s].get("supplyPrice"),
-        "库存": seen[s].get("inventory"),
-        "有无成交": "✅" if s in sold_skus else "— 零成交",
-    } for s in sku_ids])
+        "商品总销量": st["总销量"], "该经销商销量": st["X销量"],
+        "销量占比%": round(st["X销量"] / st["总销量"] * 100, 1) if st["总销量"] else 0,
+        "商品总金额": round(st["总金额"], 0), "该经销商金额": round(st["X金额"], 0),
+        "金额占比%": round(st["X金额"] / st["总金额"] * 100, 1) if st["总金额"] else 0,
+        "角色": ("主卖" if (st["X销量"] > 0 and st["X销量"] / st["总销量"] > 0.5)
+                else ("有卖" if st["X销量"] > 0 else "代理未卖")),
+    } for s, st in sku_stat.items()]).sort_values("该经销商金额", ascending=False)
 
-    # 零成交商品
-    df_zero = df_skus[df_skus["有无成交"] != "✅"].reset_index(drop=True)
+    # 品牌分布
+    brand_cnt = Counter(prod_brand(s) for s in sku_ids)
+    df_brand = pd.DataFrame(brand_cnt.items(), columns=["品牌", "代理商品数"]).sort_values("代理商品数", ascending=False)
 
     # 4. 输出
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         overview = pd.DataFrame({
-            "指标": ["经销商", "电话", "销售区域", "代理商品数", "成交商品数",
-                    "零成交商品数", "总销量", "总成交额(元)", "客户数"],
-            "数值": [dealer, phone, sales_area, len(sku_ids), len(sold_skus),
-                    len(zero_skus), total_qty, round(total_amt, 2), n_customers],
+            "指标": ["经销商", "电话", "销售区域", "代理商品数", "有成交商品", "零成交商品",
+                    "代理商品总成交(台)", "代理商品总成交(元)",
+                    "该经销商成交(台)", "该经销商成交(元)",
+                    "台数份额%", "金额份额%", "客户数"],
+            "数值": [dealer, phone, sales_area, len(sku_ids), len(sold_skus), len(sku_ids) - len(sold_skus),
+                    total_qty, round(total_amt, 2), x_qty, round(x_amt, 2),
+                    round(share_qty, 1), round(share_amt, 1), n_customers],
         })
-        overview.to_excel(writer, sheet_name="经销商概览", index=False)
+        overview.to_excel(writer, sheet_name="业务状态穿透", index=False)
+        df_share.to_excel(writer, sheet_name="商品成交占比", index=False)
         df_brand.to_excel(writer, sheet_name="品牌分布", index=False)
-        df_skus.to_excel(writer, sheet_name="代理商品清单", index=False)
         df_sales.to_excel(writer, sheet_name="成交记录", index=False)
         df_cust.to_excel(writer, sheet_name="客户汇总", index=False)
-        df_zero.to_excel(writer, sheet_name="零成交商品", index=False)
 
-    print("=" * 56)
-    print(f"经销商画像：{dealer}")
+    # 控制台摘要
+    print("=" * 60)
+    print(f"业务穿透：{dealer}")
     print(f"  电话：{phone} | 销售区域：{sales_area}")
-    print(f"  代理商品：{len(sku_ids)} 个（品牌 {len(brand_cnt)} 个）| 电话已确认")
-    print(f"  实际成交：{len(df_sales)} 笔 / {total_qty} 台 / ¥{total_amt:,.0f} / {n_customers} 家客户")
-    print(f"  零成交商品：{len(zero_skus)} 个（代理但没卖出去 → 潜在机会）")
+    print(f"  代理商品：{len(sku_ids)} 个，其中实际卖出 {len(sold_skus)} 个（{len(sold_skus)/len(sku_ids)*100:.0f}%）")
+    print(f"  📦 代理商品总盘子：{total_qty} 台 / ¥{total_amt:,.0f}")
+    print(f"  💰 该经销商卖出：{x_qty} 台 / ¥{x_amt:,.0f}（占盘子 {share_qty:.1f}% 台 / {share_amt:.1f}% 金额）")
+    print(f"  客户：{n_customers} 家")
     if len(df_cust):
         print("\n■ TOP 客户：")
         for _, r in df_cust.head(5).iterrows():
             print(f"  · {r['采购单位'][:24]}：{int(r['数量'])}台 ¥{r['金额']:,.0f}")
+    main_roles = df_share["角色"].value_counts()
+    print("\n■ 商品角色分布：", dict(main_roles))
     print(f"\n报告已保存：{out_path}")
 
 
